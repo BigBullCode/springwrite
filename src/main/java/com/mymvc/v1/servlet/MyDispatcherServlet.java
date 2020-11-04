@@ -16,6 +16,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
+import java.util.regex.Pattern;
 
 public class MyDispatcherServlet extends HttpServlet {
 
@@ -27,7 +28,10 @@ public class MyDispatcherServlet extends HttpServlet {
     //初始化IOC容器 key默认是类名首字母小写，value为对应的实例对象
     private Map<String, Object> ioc = new HashMap<String, Object>();
 
+    //v1.0
     private Map<String, Method> handlerMapping = new HashMap<String, Method>();
+    //v2.0
+    private List<Handler> handlerMapping2 = new ArrayList<>();
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -213,8 +217,12 @@ public class MyDispatcherServlet extends HttpServlet {
         for (Map.Entry<String, Object> entry : ioc.entrySet()) {
             Class<?> clazz = entry.getValue().getClass();
 
+            if (!clazz.isAnnotationPresent(MyController.class)) {
+                continue;
+            }
+            //v1.0
             //保存写在类上面的@MyRequestMapping("/demo")
-            String baseUrl = "";
+            /*String baseUrl = "";
             if (clazz.isAnnotationPresent(MyRequestMapping.class)) {
                 MyRequestMapping requestMapping = clazz.getAnnotation(MyRequestMapping.class);
                 baseUrl = requestMapping.value();
@@ -230,6 +238,26 @@ public class MyDispatcherServlet extends HttpServlet {
                 //初始化处理器映射器，并将该url放入映射器
                 handlerMapping.put(url, method);
                 System.out.println("Mapped :" + url + "," + method);
+            }*/
+
+            //v2.0
+            String url = "";
+            if (clazz.isAnnotationPresent(MyRequestMapping.class)) {
+                MyRequestMapping requestMapping = clazz.getAnnotation(MyRequestMapping.class);
+                url = requestMapping.value();
+            }
+            //获取method的url配置
+            Method[] methods = clazz.getMethods();
+            for (Method method : methods) {
+                //没有加requestMapping的直接忽略
+                if (!method.isAnnotationPresent(MyRequestMapping.class)) {
+                    continue;
+                }
+                MyRequestMapping requestMapping = method.getAnnotation(MyRequestMapping.class);
+                String regex = ("/" + url + requestMapping.value()).replaceAll("/+", "/");
+                Pattern pattern = Pattern.compile(regex);
+                handlerMapping2.add(new Handler(pattern, entry.getValue(), method));
+                System.out.println("mapping " + regex + "," + method);
             }
         }
 
@@ -308,6 +336,60 @@ public class MyDispatcherServlet extends HttpServlet {
         char[] chars = simpleName.toCharArray();
         chars[0] += 32;
         return String.valueOf(chars);
+
     }
 
+    /**
+     * spring中handlerMapping是一个List而非Map，list中的元素是自定义类型的。
+     * 这个类用来记录Controller中的Requestmapping和Method的对应关系
+     */
+    private class Handler {
+        
+
+        /**
+         * 保存方法对应的实例
+         */
+        protected Object controller;
+
+        /**
+         * 保存映射的方法
+         */
+        protected Method method;
+
+        protected Pattern pattern;
+        protected  Map<String, Integer> paramIndexMapping; //参数顺序
+
+        public Handler( Pattern pattern, Object controller, Method method) {
+            this.controller = controller;
+            this.method = method;
+            this.pattern = pattern;
+            paramIndexMapping = new HashMap<>();
+            putParamIndexMapping(method);
+        }
+
+        private void putParamIndexMapping(Method method) {
+            
+            //提取方法中加了注解的参数
+            Annotation[][] pa = method.getParameterAnnotations();
+
+            for (int i = 0; i < pa.length; i++) {
+                for (Annotation a : pa[i]) {
+                    if (a instanceof MyRequestParam) {
+                        String paramName = ((MyRequestParam) a).value();
+                        if (!"".equals(paramName.trim())) {
+                            paramIndexMapping.put(paramName, i);
+                        }
+                    }
+                }
+            }
+            //提取方法中的request和response参数
+            Class<?>[] paramsTypes = method.getParameterTypes();
+            for (int i = 0; i < paramsTypes.length; i++) {
+                Class<?> type = paramsTypes[i];
+                if (type == HttpServletRequest.class || type == HttpServletResponse.class) {
+                    paramIndexMapping.put(type.getName(), i);
+                }
+            }
+        }
+    }
 }
