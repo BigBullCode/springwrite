@@ -1,8 +1,7 @@
 package com.mymvc.v1.servlet;
 
 
-import com.mymvc.v1.annotation.MyController;
-import com.mymvc.v1.annotation.MyService;
+import com.mymvc.v1.annotation.*;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -12,6 +11,9 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
 
@@ -20,10 +22,12 @@ public class MyDispatcherServlet extends HttpServlet {
     private Properties contextConfig = new Properties();
 
     //享元模式缓存
-    private List<String> classNames = new ArrayList<>();
+    private List<String> classNames = new ArrayList<String>();
 
     //初始化IOC容器 key默认是类名首字母小写，value为对应的实例对象
-    private Map<String, Object> ioc = new HashMap<>();
+    private Map<String, Object> ioc = new HashMap<String, Object>();
+
+    private Map<String, Method> handlerMapping = new HashMap<String, Method>();
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -35,6 +39,70 @@ public class MyDispatcherServlet extends HttpServlet {
 
         //初始化完毕后
         //委派，跟据URL去找到一个对应的method并通过response返回
+        try {
+            doDispatch(req, resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            resp.getWriter().write("500 Exection, Detail : " + Arrays.toString(e.getStackTrace()));
+        }
+    }
+
+    private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        String url = req.getRequestURI();
+
+        String contextPath = req.getContextPath();
+
+        url.replaceAll(contextPath, "").replaceAll("/+", "/");
+        if (!this.handlerMapping.containsKey(url)) {
+            resp.getWriter().write("404 找不到");
+            return;
+        }
+        Method method = handlerMapping.get(url);
+        //第一个参数为方法所在的实例，第二个参数为调用时所需要的实参
+        //采用动态委派模式进行反射调用，url参数的处理是静态的
+        /*Map<String, String[]> params = req.getParameterMap(); //TODO 如何确认接收为此类型的map
+
+        String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
+        method.invoke(ioc.get(beanName), new Object[]{req, resp, params.get("name")[0]});*/
+        //url参数的动态获取
+
+        //获取方法的形参列表
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        //保存请求的url参数列表
+        Map<String, String[]> parameterMap = req.getParameterMap();
+        //保存赋值参数的位置
+        Object[] paramValues = new Object[parameterTypes.length];
+        //根据参数位置动态赋值
+        for (int i = 0; i < parameterTypes.length; i++) {
+            Class<?> parameterType = parameterTypes[i];
+            if (parameterType == HttpServletRequest.class) {
+                paramValues[i] = req;
+                continue;
+            }
+            else if (parameterType == HttpServletResponse.class) {
+                paramValues[i] = resp;
+                continue;
+            }
+            else if (parameterType == String.class) {
+                //提取方法中加了注解的参数
+                Annotation[][] pa = method.getParameterAnnotations();
+
+                for (int j = 0; j < pa.length; j++) {
+                    for (Annotation a : pa[i]) {
+                        if (a instanceof MyRequestParam) {
+                            String paramName = ((MyRequestParam) a).value();
+                            if (!"".equals(paramName.trim())) {
+                                String value = Arrays.toString(parameterMap.get(paramName)).replaceAll("\\[|\\]", "").replaceAll("\\s", "");
+                                paramValues[i] = value;
+                            }
+                        }
+
+                    }
+                }
+
+            }
+        }
+
     }
 
     @Override
@@ -158,9 +226,69 @@ public class MyDispatcherServlet extends HttpServlet {
 
 
     private void doAutowired() {
+        if (ioc.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : ioc.entrySet()) {
+            //获取所有字段，包括private,protected,default类型的
+            //正常来说，普通的oop编程只能获得public类型的字段
+            Field[] fields = entry.getValue().getClass().getDeclaredFields();
+            for (Field field : fields) {
+                if (!field.isAnnotationPresent(MyAutowired.class)) { //只对有autowired注解的属性使用
+                    return;
+                }
+                MyAutowired autowired = field.getAnnotation(MyAutowired.class);
+
+                //如果用户没有注入自定义beanName，默认就根据类型注入
+                String beanName = autowired.value().trim(); //未做类名首字母小写的情况判断
+                if ("".equals(beanName)) {
+                    //如果注解值为空,获取接口的类型做为key，然后用这个key到容器中取值
+                    beanName = field.getType().getName();
+                }
+
+                //如果是public以外的类型，只要加了@Autowired注解就要强制赋值
+                field.setAccessible(true);
+
+                try {
+                    field.set(entry.getValue(), ioc.get(beanName));
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
     }
 
+    /**
+     * 处理器映射器，利用了策略模式
+     */
     private void doInitHandlerMapping() {
+        if (ioc.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : ioc.entrySet()) {
+            Class<?> clazz = entry.getValue().getClass();
+
+            //保存写在类上面的@MyRequestMapping("/demo")
+            String baseUrl = "";
+            if (clazz.isAnnotationPresent(MyRequestMapping.class)) {
+                MyRequestMapping requestMapping = clazz.getAnnotation(MyRequestMapping.class);
+                baseUrl = requestMapping.value();
+            }
+            
+            //默认获取所有的public类型的方法
+            for (Method method : clazz.getMethods()) {
+                if (!method.isAnnotationPresent(MyRequestMapping.class)) {
+                    continue;
+                }
+                MyRequestMapping requestMapping = method.getAnnotation(MyRequestMapping.class);
+                String url = ("/" + baseUrl + "/" + requestMapping.value()).replaceAll("/+", "/");
+                //初始化处理器映射器，并将该url放入映射器
+                handlerMapping.put(url, method);
+                System.out.println("Mapped :" + url + "," + method);
+            }
+        }
+
     }
 
     /**
