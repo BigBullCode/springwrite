@@ -31,7 +31,7 @@ public class MyDispatcherServlet extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        super.doGet(req, resp);
+        this.doPost(req, resp);
     }
 
     @Override
@@ -47,63 +47,7 @@ public class MyDispatcherServlet extends HttpServlet {
         }
     }
 
-    private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        String url = req.getRequestURI();
 
-        String contextPath = req.getContextPath();
-
-        url.replaceAll(contextPath, "").replaceAll("/+", "/");
-        if (!this.handlerMapping.containsKey(url)) {
-            resp.getWriter().write("404 找不到");
-            return;
-        }
-        Method method = handlerMapping.get(url);
-        //第一个参数为方法所在的实例，第二个参数为调用时所需要的实参
-        //采用动态委派模式进行反射调用，url参数的处理是静态的
-        /*Map<String, String[]> params = req.getParameterMap(); //TODO 如何确认接收为此类型的map
-
-        String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
-        method.invoke(ioc.get(beanName), new Object[]{req, resp, params.get("name")[0]});*/
-        //url参数的动态获取
-
-        //获取方法的形参列表
-        Class<?>[] parameterTypes = method.getParameterTypes();
-        //保存请求的url参数列表
-        Map<String, String[]> parameterMap = req.getParameterMap();
-        //保存赋值参数的位置
-        Object[] paramValues = new Object[parameterTypes.length];
-        //根据参数位置动态赋值
-        for (int i = 0; i < parameterTypes.length; i++) {
-            Class<?> parameterType = parameterTypes[i];
-            if (parameterType == HttpServletRequest.class) {
-                paramValues[i] = req;
-                continue;
-            }
-            else if (parameterType == HttpServletResponse.class) {
-                paramValues[i] = resp;
-                continue;
-            }
-            else if (parameterType == String.class) {
-                //提取方法中加了注解的参数
-                Annotation[][] pa = method.getParameterAnnotations();
-
-                for (int j = 0; j < pa.length; j++) {
-                    for (Annotation a : pa[i]) {
-                        if (a instanceof MyRequestParam) {
-                            String paramName = ((MyRequestParam) a).value();
-                            if (!"".equals(paramName.trim())) {
-                                String value = Arrays.toString(parameterMap.get(paramName)).replaceAll("\\[|\\]", "").replaceAll("\\s", "");
-                                paramValues[i] = value;
-                            }
-                        }
-
-                    }
-                }
-
-            }
-        }
-
-    }
 
     @Override
     public void init(ServletConfig config) throws ServletException {
@@ -289,6 +233,70 @@ public class MyDispatcherServlet extends HttpServlet {
             }
         }
 
+    }
+
+
+    private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        String url = req.getRequestURI();
+
+        String contextPath = req.getContextPath();
+
+        url.replaceAll(contextPath, "").replaceAll("/+", "/");
+        if (!this.handlerMapping.containsKey(url)) {
+            resp.getWriter().write("404 找不到");
+            return;
+        }
+        Method method = handlerMapping.get(url);
+
+        //第一个参数为方法所在的实例，第二个参数为调用时所需要的实参
+        //采用动态委派模式进行反射调用，url参数的处理是静态的
+       /* Map<String, String[]> params = req.getParameterMap(); //TODO 如何确认接收为此类型的map
+
+        String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
+
+        //赋值形参列表，硬编码写死只有一个参数
+        method.invoke(ioc.get(beanName), new Object[]{req, resp, params.get("name")[0]});*/
+
+        //url参数的动态获取
+
+        //获取方法的形参列表
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        //保存请求的url参数列表
+        Map<String, String[]> parameterMap = req.getParameterMap();
+        //保存赋值参数的位置
+        Object[] paramValues = new Object[parameterTypes.length];
+        //根据参数位置动态赋值
+        for (int i = 0; i < parameterTypes.length; i++) {
+            Class<?> parameterType = parameterTypes[i];
+            if (parameterType == HttpServletRequest.class) {
+                paramValues[i] = req;
+                continue;
+            }
+            else if (parameterType == HttpServletResponse.class) {
+                paramValues[i] = resp;
+                continue;
+            }
+            else if (parameterType == String.class) {
+                //提取方法中加了注解的参数
+                Annotation[][] pa = method.getParameterAnnotations();
+
+                for (int j = 0; j < pa.length; j++) {
+                    for (Annotation a : pa[i]) {
+                        if (a instanceof MyRequestParam) {
+                            String paramName = ((MyRequestParam) a).value();
+                            if (!"".equals(paramName.trim())) {
+                                String value = Arrays.toString(parameterMap.get(paramName)).replaceAll("\\[|\\]", "").replaceAll("\\s", "");
+                                paramValues[i] = value;
+                            }
+                        }
+
+                    }
+                }
+
+            }
+        }
+        String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
+        method.invoke(ioc.get(beanName), paramValues);
     }
 
     /**
