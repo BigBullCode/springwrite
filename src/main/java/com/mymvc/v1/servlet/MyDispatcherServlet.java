@@ -31,7 +31,7 @@ public class MyDispatcherServlet extends HttpServlet {
     //v1.0
     private Map<String, Method> handlerMapping = new HashMap<String, Method>();
     //v2.0
-    private List<Handler> handlerMapping2 = new ArrayList<>();
+    private List<Handler> handlerMapping2 = new ArrayList<Handler>();
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -363,7 +363,7 @@ public class MyDispatcherServlet extends HttpServlet {
             this.controller = controller;
             this.method = method;
             this.pattern = pattern;
-            paramIndexMapping = new HashMap<>();
+            paramIndexMapping = new HashMap<String, Integer>();
             putParamIndexMapping(method);
         }
 
