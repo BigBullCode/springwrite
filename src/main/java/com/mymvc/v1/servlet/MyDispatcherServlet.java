@@ -16,6 +16,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
+import java.util.logging.Handler;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MyDispatcherServlet extends HttpServlet {
@@ -29,9 +31,9 @@ public class MyDispatcherServlet extends HttpServlet {
     private Map<String, Object> ioc = new HashMap<String, Object>();
 
     //v1.0
-    private Map<String, Method> handlerMapping = new HashMap<String, Method>();
+    private Map<String, Method> handlerMapping1 = new HashMap<String, Method>();
     //v2.0
-    private List<Handler> handlerMapping2 = new ArrayList<Handler>();
+    private List<MyHandler> handlerMapping = new ArrayList<MyHandler>();
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -50,6 +52,7 @@ public class MyDispatcherServlet extends HttpServlet {
             resp.getWriter().write("500 Exection, Detail : " + Arrays.toString(e.getStackTrace()));
         }
     }
+
 
 
 
@@ -256,7 +259,7 @@ public class MyDispatcherServlet extends HttpServlet {
                 MyRequestMapping requestMapping = method.getAnnotation(MyRequestMapping.class);
                 String regex = ("/" + url + requestMapping.value()).replaceAll("/+", "/");
                 Pattern pattern = Pattern.compile(regex);
-                handlerMapping2.add(new Handler(pattern, entry.getValue(), method));
+                handlerMapping.add(new MyHandler(pattern, entry.getValue(), method));
                 System.out.println("mapping " + regex + "," + method);
             }
         }
@@ -264,7 +267,13 @@ public class MyDispatcherServlet extends HttpServlet {
     }
 
 
-    private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+    /**
+     * v1
+     * @param req
+     * @param resp
+     * @throws Exception
+     */
+    /*private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String url = req.getRequestURI();
 
         String contextPath = req.getContextPath();
@@ -278,12 +287,12 @@ public class MyDispatcherServlet extends HttpServlet {
 
         //第一个参数为方法所在的实例，第二个参数为调用时所需要的实参
         //采用动态委派模式进行反射调用，url参数的处理是静态的
-       /* Map<String, String[]> params = req.getParameterMap(); //TODO 如何确认接收为此类型的map
+       *//* Map<String, String[]> params = req.getParameterMap(); //TODO 如何确认接收为此类型的map
 
         String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
 
         //赋值形参列表，硬编码写死只有一个参数
-        method.invoke(ioc.get(beanName), new Object[]{req, resp, params.get("name")[0]});*/
+        method.invoke(ioc.get(beanName), new Object[]{req, resp, params.get("name")[0]});*//*
 
         //url参数的动态获取
 
@@ -325,6 +334,51 @@ public class MyDispatcherServlet extends HttpServlet {
         }
         String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
         method.invoke(ioc.get(beanName), paramValues);
+    }*/
+
+    /**
+     * v2 匹配Url
+     * @param req
+     * @param resp
+     */
+    private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        MyHandler handler = getHandler(req);
+        String url = req.getRequestURI();
+
+        if (handler == null) {
+            if (!this.handlerMapping1.containsKey(url)) {
+                resp.getWriter().write("404 Not Found");
+                return;
+            }
+        }
+
+    }
+
+    private MyHandler getHandler(HttpServletRequest req) {
+
+        if (handlerMapping.isEmpty()) {
+            return null;
+        }
+        String url = req.getRequestURI();
+
+        String contextPath = req.getContextPath();
+        url.replace(contextPath, "").replaceAll("/+", "/");
+
+        for (MyHandler handler : handlerMapping) {
+
+            try {
+                Matcher matcher = handler.pattern.matcher(url);
+                //如果没有匹配上，继续匹配下一个
+                if (!matcher.matches()) {
+                    continue;
+                }
+                return handler;
+            } catch (Exception e) {
+                throw e;
+            }
+
+        }
+        return null;
     }
 
     /**
@@ -389,6 +443,60 @@ public class MyDispatcherServlet extends HttpServlet {
                 if (type == HttpServletRequest.class || type == HttpServletResponse.class) {
                     paramIndexMapping.put(type.getName(), i);
                 }
+            }
+        }
+    }
+
+
+
+    /**
+     * 内部类
+     * @Author: Zhangdongdong
+     * @Date: 2020/12/2 11:24
+     */
+    private class MyHandler {
+
+        protected Object controller;
+
+        protected Method method; //保存映射的方法
+
+        protected Pattern pattern;
+
+        protected Map<String, Integer> paramIndexMapping; //参数顺序
+
+        public MyHandler(Pattern pattern, Object controller, Method method) {
+            this.controller = controller;
+            this.method = method;
+            this.pattern = pattern;
+
+            paramIndexMapping = new HashMap<>();
+            putParamIndexMapping(method);
+        }
+
+        private void putParamIndexMapping(Method method) {
+
+            //提取方法中加了注解的参数
+            Annotation[] [] pa = method.getParameterAnnotations();
+            for (int i = 0; i < pa.length; i++) {
+                for (Annotation a : pa[i]) {
+                    if (a instanceof MyRequestParam) {
+                        String paramName = ((MyRequestParam) a).value();
+                        if (!"".equals(paramName.trim())) {
+                            paramIndexMapping.put(paramName, i);
+                        }
+                    }
+                }
+            }
+
+            //提取方法中的request和response参数
+            Class<?>[] parameterTypes = method.getParameterTypes();
+
+            for (int i = 0; i < parameterTypes.length; i++) {
+                Class<?> type = parameterTypes[i];
+                if (type == HttpServletRequest.class || type == HttpServletResponse.class) {
+                    paramIndexMapping.put(type.getName(), i);
+                }
+
             }
         }
     }
